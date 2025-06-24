@@ -1,0 +1,7 @@
+fastapi
+uvicorn
+praw
+transformers
+pydantic
+httpx
+python-dotenv 
