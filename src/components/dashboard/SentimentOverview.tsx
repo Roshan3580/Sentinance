@@ -1,4 +1,5 @@
-import { useEffect, useState } from "react";
+import { useMemo } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { TrendingUp, TrendingDown, Activity, MessageSquare, Twitter, Newspaper } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 
@@ -6,54 +7,77 @@ interface SentimentOverviewProps {
   ticker: string;
 }
 
-export const SentimentOverview = ({ ticker }: SentimentOverviewProps) => {
-  const [data, setData] = useState<any>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+interface SentimentApiMention {
+  sentiment: number;
+  timestamp: string;
+  text: string;
+}
 
-  useEffect(() => {
-    setLoading(true);
-    setError(null);
-    fetch(`http://localhost:8000/sentiment/reddit?ticker=${ticker}&limit=100`)
-      .then(res => {
-        if (!res.ok) throw new Error('Failed to fetch');
-        return res.json();
-      })
-      .then(json => {
-        if (json.length === 0) {
-          setData({
-            overall: 0,
-            change: 0,
-            reddit: { score: 0, posts: 0, change: 0 },
-            twitter: { score: 0, tweets: 0, change: 0 },
-            news: { score: 0, articles: 0, change: 0 }
-          });
-        } else {
-          // Calculate sentiment statistics
-          const sentiments = json.map((item: any) => item.sentiment);
-          const avgSentiment = sentiments.reduce((a: number, b: number) => a + b, 0) / sentiments.length;
-          const positiveCount = sentiments.filter((s: number) => s > 0.1).length;
-          const negativeCount = sentiments.filter((s: number) => s < -0.1).length;
-          
-          setData({
-            overall: avgSentiment * 100,
-            change: ((positiveCount - negativeCount) / sentiments.length) * 100,
-            reddit: { 
-              score: avgSentiment * 100, 
-              posts: sentiments.length, 
-              change: ((positiveCount - negativeCount) / sentiments.length) * 100 
-            },
-            twitter: { score: 0, tweets: 0, change: 0 }, // Placeholder for future
-            news: { score: 0, articles: 0, change: 0 }   // Placeholder for future
-          });
-        }
-        setLoading(false);
-      })
-      .catch((err) => {
-        setError('Could not load sentiment overview.');
-        setLoading(false);
-      });
-  }, [ticker]);
+interface SentimentOverviewApiResponse {
+  ticker: string;
+  timestamps: string[];
+  scores: number[];
+  top_posts: SentimentApiMention[];
+}
+
+interface OverviewData {
+  overall: number;
+  change: number;
+  reddit: { score: number; posts: number; change: number };
+  twitter: { score: number; tweets: number; change: number };
+  news: { score: number; articles: number; change: number };
+}
+
+const fetchMentions = async (ticker: string): Promise<SentimentOverviewApiResponse> => {
+  const res = await fetch(
+    `http://localhost:8000/sentiment/reddit?ticker=${encodeURIComponent(ticker)}&limit=100`
+  );
+  if (!res.ok) {
+    throw new Error("Failed to fetch sentiment overview");
+  }
+  return res.json();
+};
+
+export const SentimentOverview = ({ ticker }: SentimentOverviewProps) => {
+  const {
+    data,
+    isLoading,
+    isError,
+    error,
+    refetch,
+  } = useQuery<SentimentOverviewApiResponse, Error>({
+    queryKey: ["sentimentOverview", ticker],
+    queryFn: () => fetchMentions(ticker),
+    refetchInterval: 60000,
+  });
+
+  const overviewData: OverviewData | null = useMemo(() => {
+    if (!data || !Array.isArray(data.top_posts)) return null;
+    if (data.top_posts.length === 0) {
+      return {
+        overall: 0,
+        change: 0,
+        reddit: { score: 0, posts: 0, change: 0 },
+        twitter: { score: 0, tweets: 0, change: 0 },
+        news: { score: 0, articles: 0, change: 0 },
+      };
+    }
+    const sentiments = data.top_posts.map((item) => item.sentiment);
+    const avgSentiment = sentiments.reduce((a, b) => a + b, 0) / sentiments.length;
+    const positiveCount = sentiments.filter((s) => s > 0.1).length;
+    const negativeCount = sentiments.filter((s) => s < -0.1).length;
+    return {
+      overall: avgSentiment * 100,
+      change: ((positiveCount - negativeCount) / sentiments.length) * 100,
+      reddit: {
+        score: avgSentiment * 100,
+        posts: sentiments.length,
+        change: ((positiveCount - negativeCount) / sentiments.length) * 100,
+      },
+      twitter: { score: 0, tweets: 0, change: 0 },
+      news: { score: 0, articles: 0, change: 0 },
+    };
+  }, [data]);
 
   const StatCard = ({ title, value, change, icon: Icon, count, unit }: any) => (
     <div className="bg-slate-700/30 rounded-lg p-4 border border-slate-600/30">
@@ -77,16 +101,16 @@ export const SentimentOverview = ({ ticker }: SentimentOverviewProps) => {
             {count.toLocaleString()} {unit}
           </div>
         </div>
-        <div className={`text-sm font-medium ${change > 0 ? 'text-green-400' : 'text-red-400'}`}>
+        <div className={`text-sm font-medium ${change > 0 ? 'text-green-400' : 'text-red-400'}`}> 
           {change > 0 ? '+' : ''}{change.toFixed(1)}%
         </div>
       </div>
     </div>
   );
 
-  if (loading) return <div className="text-slate-300">Loading sentiment overview...</div>;
-  if (error) return <div className="text-red-400">{error}</div>;
-  if (!data) return <div className="text-slate-400">No sentiment data available.</div>;
+  if (isLoading) return <div className="text-slate-300">Loading sentiment overview...</div>;
+  if (isError) return <div className="text-red-400">{error?.message}</div>;
+  if (!overviewData) return <div className="text-slate-400">No sentiment data available.</div>;
 
   return (
     <Card className="bg-slate-800/50 border-slate-700/50 backdrop-blur-sm">
@@ -96,10 +120,10 @@ export const SentimentOverview = ({ ticker }: SentimentOverviewProps) => {
           <div className="flex items-center space-x-2">
             <Activity className="h-4 w-4 text-cyan-400" />
             <span className="text-lg font-bold text-cyan-400">
-              {data.overall > 0 ? '+' : ''}{data.overall.toFixed(1)}%
+              {overviewData.overall > 0 ? '+' : ''}{overviewData.overall.toFixed(1)}%
             </span>
-            <span className={`text-sm ${data.change > 0 ? 'text-green-400' : 'text-red-400'}`}>
-              ({data.change > 0 ? '+' : ''}{data.change.toFixed(1)}%)
+            <span className={`text-sm ${overviewData.change > 0 ? 'text-green-400' : 'text-red-400'}`}>
+              ({overviewData.change > 0 ? '+' : ''}{overviewData.change.toFixed(1)}%)
             </span>
           </div>
         </CardTitle>
@@ -108,26 +132,26 @@ export const SentimentOverview = ({ ticker }: SentimentOverviewProps) => {
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           <StatCard
             title="Reddit"
-            value={data.reddit.score}
-            change={data.reddit.change}
+            value={overviewData.reddit.score}
+            change={overviewData.reddit.change}
             icon={MessageSquare}
-            count={data.reddit.posts}
+            count={overviewData.reddit.posts}
             unit="posts"
           />
           <StatCard
             title="Twitter"
-            value={data.twitter.score}
-            change={data.twitter.change}
+            value={overviewData.twitter.score}
+            change={overviewData.twitter.change}
             icon={Twitter}
-            count={data.twitter.tweets}
+            count={overviewData.twitter.tweets}
             unit="tweets"
           />
           <StatCard
             title="News"
-            value={data.news.score}
-            change={data.news.change}
+            value={overviewData.news.score}
+            change={overviewData.news.change}
             icon={Newspaper}
-            count={data.news.articles}
+            count={overviewData.news.articles}
             unit="articles"
           />
         </div>

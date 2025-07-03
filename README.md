@@ -28,6 +28,3 @@ Sentinance is a full-stack, real-time sentiment and event tracking platform for 
 
 ## 🖼️ Demo
 *Coming soon!*
-
-## 📝 License
-MIT (or your preferred license)

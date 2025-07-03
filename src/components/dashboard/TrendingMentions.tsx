@@ -1,4 +1,5 @@
-import { useEffect, useState } from "react";
+import { useMemo } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { MessageSquare, TrendingUp, Clock } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 
@@ -6,38 +7,65 @@ interface TrendingMentionsProps {
   ticker: string;
 }
 
-export const TrendingMentions = ({ ticker }: TrendingMentionsProps) => {
-  const [mentions, setMentions] = useState<any[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+interface SentimentMention {
+  id: number;
+  source: string;
+  author: string;
+  content: string;
+  score: number;
+  sentiment: number;
+  time: string;
+}
 
-  useEffect(() => {
-    setLoading(true);
-    setError(null);
-    fetch(`http://localhost:8000/sentiment/reddit?ticker=${ticker}&limit=10`)
-      .then(res => {
-        if (!res.ok) throw new Error('Failed to fetch');
-        return res.json();
-      })
-      .then(json => {
-        // Transform backend data to mentions format
-        const transformedMentions = json.map((item: any, index: number) => ({
-          id: index + 1,
-          source: "Reddit",
-          author: "Reddit User", // Backend doesn't provide author info yet
-          content: item.text.length > 200 ? item.text.substring(0, 200) + "..." : item.text,
-          score: Math.abs(item.sentiment * 1000), // Convert sentiment to a score-like number
-          sentiment: item.sentiment,
-          time: new Date(item.timestamp).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })
-        }));
-        setMentions(transformedMentions);
-        setLoading(false);
-      })
-      .catch((err) => {
-        setError('Could not load trending mentions.');
-        setLoading(false);
-      });
-  }, [ticker]);
+interface SentimentApiMention {
+  sentiment: number;
+  timestamp: string;
+  text: string;
+  // Optionally add author if backend provides it
+}
+
+interface TrendingMentionsApiResponse {
+  ticker: string;
+  timestamps: string[];
+  scores: number[];
+  top_posts: SentimentApiMention[];
+}
+
+const fetchMentions = async (ticker: string): Promise<TrendingMentionsApiResponse> => {
+  const res = await fetch(
+    `http://localhost:8000/sentiment/reddit?ticker=${encodeURIComponent(ticker)}&limit=10`
+  );
+  if (!res.ok) {
+    throw new Error("Failed to fetch trending mentions");
+  }
+  return res.json();
+};
+
+export const TrendingMentions = ({ ticker }: TrendingMentionsProps) => {
+  const {
+    data,
+    isLoading,
+    isError,
+    error,
+    refetch,
+  } = useQuery<TrendingMentionsApiResponse, Error>({
+    queryKey: ["trendingMentions", ticker],
+    queryFn: () => fetchMentions(ticker),
+    refetchInterval: 60000,
+  });
+
+  const mentions: SentimentMention[] = useMemo(() => {
+    if (!data || !Array.isArray(data.top_posts)) return [];
+    return data.top_posts.map((item, index) => ({
+      id: index + 1,
+      source: "Reddit",
+      author: "Reddit User", // Update if backend provides author
+      content: item.text.length > 200 ? item.text.substring(0, 200) + "..." : item.text,
+      score: Math.abs(item.sentiment * 1000),
+      sentiment: item.sentiment,
+      time: new Date(item.timestamp).toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit" })
+    }));
+  }, [data]);
 
   const getSentimentColor = (sentiment: number) => {
     if (sentiment > 0.5) return "text-green-400";
@@ -52,8 +80,8 @@ export const TrendingMentions = ({ ticker }: TrendingMentionsProps) => {
     return "🔴";
   };
 
-  if (loading) return <div className="text-slate-300">Loading trending mentions...</div>;
-  if (error) return <div className="text-red-400">{error}</div>;
+  if (isLoading) return <div className="text-slate-300">Loading trending mentions...</div>;
+  if (isError) return <div className="text-red-400">{error?.message}</div>;
   if (!mentions.length) return <div className="text-slate-400">No mentions available for {ticker}.</div>;
 
   return (
@@ -108,7 +136,7 @@ export const TrendingMentions = ({ ticker }: TrendingMentionsProps) => {
         
         <div className="mt-4 pt-4 border-t border-slate-600/30">
           <div className="text-center">
-            <button className="text-sm text-blue-400 hover:text-blue-300 transition-colors">
+            <button className="text-sm text-blue-400 hover:text-blue-300 transition-colors" onClick={() => refetch()}>
               Load more mentions →
             </button>
           </div>

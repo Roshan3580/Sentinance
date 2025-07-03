@@ -25,7 +25,7 @@ class SentimentResponse(BaseModel):
     text: str
 
 # Load sentiment analysis pipeline (FinBERT or similar)
-sentiment_pipeline = pipeline("sentiment-analysis", model="ProsusAI/finbert")
+sentiment_pipeline = pipeline("sentiment-analysis", model="yiyanghkust/finbert-tone")
 
 # Reddit API credentials from environment variables
 REDDIT_CLIENT_ID = os.getenv("REDDIT_CLIENT_ID")
@@ -45,7 +45,7 @@ reddit = praw.Reddit(
 def root():
     return {"message": "Sentinance Backend is running."}
 
-@app.get("/sentiment/reddit", response_model=List[SentimentResponse])
+@app.get("/sentiment/reddit")
 def get_reddit_sentiment(ticker: str, limit: int = 10):
     try:
         subreddit = reddit.subreddit("stocks+wallstreetbets")
@@ -54,13 +54,15 @@ def get_reddit_sentiment(ticker: str, limit: int = 10):
         results = []
         for post in posts:
             text = post.title + ("\n" + post.selftext if post.selftext else "")
-            # Run sentiment analysis
             sentiment_result = sentiment_pipeline(text[:512])[0]  # Truncate to 512 chars
-            sentiment_score = (
-                1.0 if sentiment_result["label"] == "positive" else
-                -1.0 if sentiment_result["label"] == "negative" else
-                0.0
-            )
+            label = sentiment_result["label"].lower()
+            score = sentiment_result.get("score", 1.0)
+            if label == "positive":
+                sentiment_score = score if score >= 0.6 else 0.0
+            elif label == "negative":
+                sentiment_score = -score if score >= 0.6 else 0.0
+            else:
+                sentiment_score = 0.0
             results.append(SentimentResponse(
                 ticker=ticker,
                 source="reddit",
@@ -68,6 +70,15 @@ def get_reddit_sentiment(ticker: str, limit: int = 10):
                 timestamp=datetime.fromtimestamp(post.created_utc, tz=timezone.utc).isoformat(),
                 text=text
             ))
-        return results
+        # Transform to the expected format
+        timestamps = [r.timestamp for r in results]
+        scores = [r.sentiment for r in results]
+        top_posts = [r.dict() for r in results]
+        return {
+            "ticker": ticker,
+            "timestamps": timestamps,
+            "scores": scores,
+            "top_posts": top_posts
+        }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e)) 
