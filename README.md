@@ -1,5 +1,7 @@
 # Sentinance: Stock Market Sentiment Analysis Platform
 
+![Sentinance Dashboard Screenshot](public/screenshot.png)
+
 Sentinance is a full-stack, real-time sentiment and event tracking platform for retail stock traders and small fund managers. It aggregates Reddit (and soon Twitter/News) data to provide real-time sentiment graphs, event detection, and custom alerts for stock tickers.
 
 ## 🚀 Features

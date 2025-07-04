@@ -21,7 +21,6 @@ interface SentimentApiResponse {
 
 interface SentimentChartProps {
   ticker: string;
-  timeRange: string;
 }
 
 interface ChartDataPoint {
@@ -36,7 +35,7 @@ const fetchSentiment = async (ticker: string, source: string): Promise<Sentiment
   return res.json();
 };
 
-export const SentimentChart = ({ ticker, timeRange }: SentimentChartProps) => {
+export const SentimentChart = ({ ticker }: SentimentChartProps) => {
   const redditQuery = useQuery<SentimentApiResponse, Error>({
     queryKey: ["sentiment", ticker, "reddit"],
     queryFn: () => fetchSentiment(ticker, "reddit"),

@@ -11,6 +11,7 @@ from fastapi.middleware.cors import CORSMiddleware
 import httpx
 import subprocess
 import json
+from fastapi.responses import JSONResponse
 
 app = FastAPI(title="Sentinance Backend")
 app.add_middleware(
@@ -195,4 +196,68 @@ async def get_stock_history(ticker: str, days: int = Query(30, ge=1, le=100)):
             close=float(day["4. close"]),
             volume=int(day["5. volume"])
         ))
-    return list(reversed(points))  # Oldest first 
+    return list(reversed(points))  # Oldest first
+
+@app.get("/stocks/top-movers")
+async def get_top_movers():
+    tickers = [
+        {"symbol": "AAPL", "name": "Apple Inc."},
+        {"symbol": "MSFT", "name": "Microsoft Corporation"},
+        {"symbol": "GOOGL", "name": "Alphabet Inc."},
+        {"symbol": "TSLA", "name": "Tesla Inc."},
+        {"symbol": "AMZN", "name": "Amazon.com Inc."},
+        {"symbol": "NVDA", "name": "NVIDIA Corporation"},
+    ]
+    results = []
+    async with httpx.AsyncClient() as client:
+        for t in tickers:
+            url = f"https://www.alphavantage.co/query?function=GLOBAL_QUOTE&symbol={t['symbol']}&apikey={ALPHA_VANTAGE_API_KEY}"
+            r = await client.get(url)
+            data = r.json()
+            quote = data.get("Global Quote", {})
+            try:
+                price = float(quote["05. price"])
+                prev_close = float(quote["08. previous close"])
+                change_percent = ((price - prev_close) / prev_close) * 100 if prev_close else 0.0
+            except Exception:
+                price = 0.0
+                change_percent = 0.0
+            results.append({
+                "symbol": t["symbol"],
+                "name": t["name"],
+                "price": price,
+                "change_percent": change_percent,
+            })
+    sorted_results = sorted(results, key=lambda x: x["change_percent"], reverse=True)
+    gainers = sorted_results[:3]
+    losers = sorted(results, key=lambda x: x["change_percent"])[:3]
+    return JSONResponse({"gainers": gainers, "losers": losers})
+
+@app.get("/stocks/most-active")
+async def get_most_active():
+    tickers = [
+        {"symbol": "AAPL", "name": "Apple Inc."},
+        {"symbol": "MSFT", "name": "Microsoft Corporation"},
+        {"symbol": "GOOGL", "name": "Alphabet Inc."},
+        {"symbol": "TSLA", "name": "Tesla Inc."},
+        {"symbol": "AMZN", "name": "Amazon.com Inc."},
+        {"symbol": "NVDA", "name": "NVIDIA Corporation"},
+    ]
+    results = []
+    async with httpx.AsyncClient() as client:
+        for t in tickers:
+            url = f"https://www.alphavantage.co/query?function=GLOBAL_QUOTE&symbol={t['symbol']}&apikey={ALPHA_VANTAGE_API_KEY}"
+            r = await client.get(url)
+            data = r.json()
+            quote = data.get("Global Quote", {})
+            try:
+                volume = int(quote["06. volume"])
+            except Exception:
+                volume = 0
+            results.append({
+                "symbol": t["symbol"],
+                "name": t["name"],
+                "volume": volume,
+            })
+    sorted_results = sorted(results, key=lambda x: x["volume"], reverse=True)
+    return JSONResponse({"most_active": sorted_results[:5]}) 

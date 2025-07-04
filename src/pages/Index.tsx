@@ -68,9 +68,87 @@ function RedditPanel({ ticker }: { ticker: string }) {
   );
 }
 
+function TopMoversPanel({ type, data, isLoading, isError }: { type: 'gainers' | 'losers', data: any[], isLoading: boolean, isError: boolean }) {
+  if (isLoading) {
+    return <div className="bg-slate-800/50 border border-slate-700/50 rounded-lg p-4 flex items-center justify-center h-32 text-slate-400 animate-pulse">Loading {type}...</div>;
+  }
+  if (isError) {
+    return <div className="bg-slate-800/50 border border-slate-700/50 rounded-lg p-4 flex items-center justify-center h-32 text-red-400">Failed to load {type}.</div>;
+  }
+  return (
+    <div className="bg-slate-800/50 border border-slate-700/50 rounded-lg p-4">
+      <div className="text-lg font-semibold text-white mb-2">Top {type === 'gainers' ? 'Gainers' : 'Losers'}</div>
+      <ul className="space-y-2">
+        {data.map((item) => (
+          <li key={item.symbol} className="flex items-center justify-between">
+            <span className="font-medium text-slate-200">{item.symbol}</span>
+            <span className="text-xs text-slate-400 ml-2">{item.name}</span>
+            <span className={type === 'gainers' ? 'text-green-400 font-bold' : 'text-red-400 font-bold'}>
+              {item.change_percent > 0 ? '+' : ''}{item.change_percent.toFixed(2)}%
+            </span>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+function MostActivePanel() {
+  const { data, isLoading, isError } = useQuery<any, Error>({
+    queryKey: ["most-active"],
+    queryFn: async () => {
+      const res = await fetch("http://localhost:8000/stocks/most-active");
+      if (!res.ok) throw new Error("Failed to fetch most active stocks");
+      return res.json();
+    },
+    refetchInterval: 60000,
+  });
+  if (isLoading) {
+    return <div className="bg-slate-800/50 border border-slate-700/50 rounded-lg p-4 flex items-center justify-center h-32 text-slate-400 animate-pulse">Loading most active stocks...</div>;
+  }
+  if (isError) {
+    return <div className="bg-slate-800/50 border border-slate-700/50 rounded-lg p-4 flex items-center justify-center h-32 text-red-400">Failed to load most active stocks.</div>;
+  }
+  return (
+    <div className="bg-slate-800/50 border border-slate-700/50 rounded-lg p-4 mb-2">
+      <div className="text-lg font-semibold text-white mb-2">Most Active Stocks (By Volume)</div>
+      <ul className="space-y-2">
+        {data?.most_active?.map((item: any) => (
+          <li key={item.symbol} className="flex items-center justify-between">
+            <span className="font-medium text-slate-200">{item.symbol}</span>
+            <span className="text-xs text-slate-400 ml-2">{item.name}</span>
+            <span className="text-xs text-blue-400 font-bold">{item.volume.toLocaleString()}</span>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+function TopMoversFetcher() {
+  const { data, isLoading, isError } = useQuery<any, Error>({
+    queryKey: ["top-movers"],
+    queryFn: async () => {
+      const res = await fetch("http://localhost:8000/stocks/top-movers");
+      if (!res.ok) throw new Error("Failed to fetch top movers");
+      return res.json();
+    },
+    refetchInterval: 60000,
+  });
+  return (
+    <div className="flex flex-col md:flex-row gap-6">
+      <div className="flex-1 min-w-0 flex flex-col">
+        <TopMoversPanel type="gainers" data={data?.gainers || []} isLoading={isLoading} isError={isError} />
+      </div>
+      <div className="flex-1 min-w-0 flex flex-col">
+        <TopMoversPanel type="losers" data={data?.losers || []} isLoading={isLoading} isError={isError} />
+      </div>
+    </div>
+  );
+}
+
 const Index = () => {
   const [selectedTicker, setSelectedTicker] = useState("AAPL");
-  const [timeRange, setTimeRange] = useState("24h");
   const [tab, setTab] = useState("stocks");
 
   return (
@@ -78,13 +156,17 @@ const Index = () => {
       {/* Header */}
       <header className="relative z-50 border-b border-slate-700/50 bg-slate-900/80 backdrop-blur-sm">
         <div className="max-w-7xl mx-auto px-6 py-4">
-          <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
-            <div className="flex items-center space-x-4 w-full">
-              <h1 className="text-2xl font-bold bg-gradient-to-r from-blue-400 to-cyan-400 bg-clip-text text-transparent">
-                Sentinance
-              </h1>
-              <div className="w-80"><TickerSearch selectedTicker={selectedTicker} onTickerChange={setSelectedTicker} /></div>
-              <div className="flex-1 flex items-center justify-start ml-4">
+          <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 w-full">
+            <div className="flex flex-row items-center w-full">
+              <div className="flex-shrink-0 flex items-center" style={{ minWidth: 0 }}>
+                <h1 className="text-2xl font-bold bg-gradient-to-r from-blue-400 to-cyan-400 bg-clip-text text-transparent">
+                  Sentinance
+                </h1>
+              </div>
+              <div className="flex-1 flex justify-center items-center min-w-0 px-4">
+                <div className="w-full max-w-xs"><TickerSearch selectedTicker={selectedTicker} onTickerChange={setSelectedTicker} /></div>
+              </div>
+              <div className="flex-shrink-0 flex items-center space-x-4">
                 <Tabs defaultValue={tab} onValueChange={setTab} className="w-auto">
                   <TabsList className="bg-transparent p-0 space-x-2 shadow-none">
                     <TabsTrigger value="stocks" className="bg-transparent px-3 py-2 text-base font-medium text-slate-300 data-[state=active]:text-white data-[state=active]:border-b-2 data-[state=active]:border-blue-400 rounded-none shadow-none focus:outline-none">
@@ -98,21 +180,9 @@ const Index = () => {
                     </TabsTrigger>
                   </TabsList>
                 </Tabs>
+                <div className="h-2 w-2 bg-green-400 rounded-full animate-pulse ml-4"></div>
+                <span className="text-sm text-slate-300">Live</span>
               </div>
-            </div>
-            <div className="flex items-center space-x-4">
-              <select 
-                value={timeRange} 
-                onChange={(e) => setTimeRange(e.target.value)}
-                className="bg-slate-800 border border-slate-600 text-white px-3 py-2 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-              >
-                <option value="1h">1 Hour</option>
-                <option value="24h">24 Hours</option>
-                <option value="7d">7 Days</option>
-                <option value="30d">30 Days</option>
-              </select>
-              <div className="h-2 w-2 bg-green-400 rounded-full animate-pulse"></div>
-              <span className="text-sm text-slate-300">Live</span>
             </div>
           </div>
         </div>
@@ -121,15 +191,23 @@ const Index = () => {
       <main className="max-w-7xl mx-auto px-6 py-8">
         <Tabs value={tab} onValueChange={setTab} className="w-full">
           <TabsContent value="stocks">
-            <div className="space-y-6">
-              <StockDetailsPanel ticker={selectedTicker} />
-              <StockPriceChart ticker={selectedTicker} />
+            <div className="flex flex-col gap-6">
+              <div>
+                <StockDetailsPanel ticker={selectedTicker} />
+              </div>
+              <MostActivePanel />
+              <TopMoversFetcher />
+              <div className="flex flex-col md:flex-row gap-6">
+                <div className="flex-1 min-w-0 flex flex-col">
+                  <StockPriceChart ticker={selectedTicker} />
+                </div>
+              </div>
             </div>
           </TabsContent>
           <TabsContent value="sentiment">
             <div className="flex flex-col md:flex-row gap-6 justify-start items-stretch w-full">
               <div className="flex-[3_1_0%] min-w-0 flex flex-col min-h-[28rem]">
-                <SentimentChart ticker={selectedTicker} timeRange={timeRange} />
+                <SentimentChart ticker={selectedTicker} />
               </div>
               <div className="flex-[2_1_0%] min-w-0 flex flex-col min-h-[28rem]">
                 <NewsPanel ticker={selectedTicker} />
