@@ -1,59 +1,36 @@
-
 import { ExternalLink, Clock, TrendingUp } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { useQuery } from "@tanstack/react-query";
 
 interface NewsPanelProps {
   ticker: string;
 }
 
+interface SentimentMention {
+  source: string;
+  sentiment: number;
+  timestamp: string;
+  text: string;
+}
+
+interface SentimentApiResponse {
+  ticker: string;
+  timestamps: string[];
+  scores: number[];
+  top_posts: SentimentMention[];
+}
+
 export const NewsPanel = ({ ticker }: NewsPanelProps) => {
-  const mockNews = [
-    {
-      id: 1,
-      title: `${ticker} Reports Strong Q3 Earnings, Beats Analyst Expectations`,
-      source: "Reuters",
-      time: "2 hours ago",
-      sentiment: 0.85,
-      summary: "Revenue increased 18% year-over-year with strong performance across all segments.",
-      url: "#"
+  const { data, isLoading, isError, error } = useQuery<SentimentApiResponse, Error>({
+    queryKey: ["sentiment", ticker, "news"],
+    queryFn: async () => {
+      const res = await fetch(`http://localhost:8000/sentiment/${ticker}?source=news`);
+      if (!res.ok) throw new Error("Failed to fetch news data");
+      return res.json();
     },
-    {
-      id: 2,
-      title: `Analyst Upgrades ${ticker} Price Target to $200 Following Innovation Announcement`,
-      source: "Bloomberg",
-      time: "4 hours ago",
-      sentiment: 0.72,
-      summary: "New product line expected to drive significant growth in upcoming quarters.",
-      url: "#"
-    },
-    {
-      id: 3,
-      title: `${ticker} Faces Regulatory Scrutiny Over Data Privacy Practices`,
-      source: "Wall Street Journal",
-      time: "6 hours ago",
-      sentiment: -0.45,
-      summary: "Government agencies launch investigation into company's handling of user data.",
-      url: "#"
-    },
-    {
-      id: 4,
-      title: `${ticker} Announces Strategic Partnership with Major Cloud Provider`,
-      source: "TechCrunch",
-      time: "8 hours ago",
-      sentiment: 0.63,
-      summary: "Multi-year deal expected to enhance enterprise capabilities and market reach.",
-      url: "#"
-    },
-    {
-      id: 5,
-      title: `Supply Chain Disruptions May Impact ${ticker} Q4 Guidance`,
-      source: "MarketWatch",
-      time: "12 hours ago",
-      sentiment: -0.28,
-      summary: "Management warns of potential headwinds from ongoing global supply issues.",
-      url: "#"
-    }
-  ];
+    enabled: !!ticker,
+    refetchInterval: 60000,
+  });
 
   const getSentimentColor = (sentiment: number) => {
     if (sentiment > 0.5) return "text-green-400";
@@ -69,74 +46,55 @@ export const NewsPanel = ({ ticker }: NewsPanelProps) => {
     return "bg-red-500/10 border-red-500/20";
   };
 
+  if (isLoading) {
+    return (
+      <div className="bg-slate-800/50 border border-slate-700/50 rounded-lg p-8 text-white flex items-center justify-center h-64">
+        <span className="text-slate-400 animate-pulse">Loading news...</span>
+      </div>
+    );
+  }
+
+  if (isError || !data?.top_posts?.length) {
+    return (
+      <div className="bg-slate-800/50 border border-slate-700/50 rounded-lg p-8 text-white flex items-center justify-center h-64">
+        <span className="text-red-400">No news data available for this ticker.</span>
+      </div>
+    );
+  }
+
   return (
-    <Card className="bg-slate-800/50 border-slate-700/50 backdrop-blur-sm">
-      <CardHeader className="pb-3">
-        <CardTitle className="text-white flex items-center justify-between">
-          <span>Latest News - {ticker}</span>
-          <TrendingUp className="h-5 w-5 text-cyan-400" />
-        </CardTitle>
-      </CardHeader>
-      <CardContent>
-        <div className="space-y-4 max-h-96 overflow-y-auto custom-scrollbar">
-          {mockNews.map((article) => (
-            <div
-              key={article.id}
-              className={`rounded-lg p-4 border transition-all hover:shadow-lg ${getSentimentBg(article.sentiment)}`}
-            >
-              <div className="flex items-start justify-between mb-2">
-                <div className="flex-1">
-                  <h3 className="text-sm font-semibold text-white mb-1 leading-tight">
-                    {article.title}
-                  </h3>
-                  <div className="flex items-center space-x-2 mb-2">
-                    <span className="text-xs text-slate-400">{article.source}</span>
-                    <span className="text-xs text-slate-500">•</span>
-                    <div className="flex items-center space-x-1">
-                      <Clock className="h-3 w-3 text-slate-500" />
-                      <span className="text-xs text-slate-400">{article.time}</span>
-                    </div>
-                  </div>
-                </div>
-                <div className="flex items-center space-x-2 ml-3">
-                  <span className={`text-sm font-medium ${getSentimentColor(article.sentiment)}`}>
-                    {(article.sentiment * 100).toFixed(0)}%
-                  </span>
-                  <ExternalLink className="h-4 w-4 text-slate-400 hover:text-slate-300 cursor-pointer" />
+    <div className="bg-slate-800/50 border-slate-700/50 border rounded-lg">
+      <div className="flex items-center justify-between px-6 pt-6 pb-2">
+        <span className="text-white text-lg font-semibold">Latest News - {ticker}</span>
+        <TrendingUp className="h-5 w-5 text-cyan-400" />
+      </div>
+      <div className="px-6 pb-6 space-y-4 max-h-96 overflow-y-auto custom-scrollbar">
+        {data.top_posts.map((article, idx) => (
+          <div
+            key={idx}
+            className={`rounded-lg p-4 border transition-all hover:shadow-lg ${getSentimentBg(article.sentiment)}`}
+          >
+            <div className="flex items-start justify-between mb-2">
+              <div className="flex-1">
+                <h3 className="text-sm font-semibold text-white mb-1 leading-tight">
+                  {article.text.split("\n")[0]}
+                </h3>
+                <div className="flex items-center space-x-2 mb-2">
+                  <span className="text-xs text-slate-400">{new Date(article.timestamp).toLocaleString()}</span>
                 </div>
               </div>
-              
-              <p className="text-xs text-slate-300 mb-3 leading-relaxed">
-                {article.summary}
-              </p>
-              
-              <div className="flex items-center justify-between">
-                <div className={`text-xs px-2 py-1 rounded ${
-                  article.sentiment > 0 
-                    ? 'bg-green-500/20 text-green-300' 
-                    : 'bg-red-500/20 text-red-300'
-                }`}>
-                  {article.sentiment > 0 ? 'Positive' : 'Negative'} Impact
-                </div>
-                <button className="text-xs text-blue-400 hover:text-blue-300 transition-colors">
-                  Read full article →
-                </button>
+              <div className="flex items-center space-x-2 ml-3">
+                <span className={`text-sm font-medium ${getSentimentColor(article.sentiment)}`}>
+                  {(article.sentiment * 100).toFixed(0)}%
+                </span>
               </div>
             </div>
-          ))}
-        </div>
-        
-        <div className="mt-4 pt-4 border-t border-slate-600/30">
-          <div className="flex items-center justify-between text-sm">
-            <span className="text-slate-400">
-              Powered by AI sentiment analysis
-            </span>
-            <button className="text-blue-400 hover:text-blue-300 transition-colors">
-              View all news →
-            </button>
+            <p className="text-xs text-slate-300 mb-3 leading-relaxed">
+              {article.text.split("\n").slice(1).join(" ")}
+            </p>
           </div>
-        </div>
-      </CardContent>
-    </Card>
+        ))}
+      </div>
+    </div>
   );
 };

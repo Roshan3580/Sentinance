@@ -27,7 +27,6 @@ interface SentimentChartProps {
 interface ChartDataPoint {
   time: string;
   reddit?: number;
-  twitter?: number;
   news?: number;
 }
 
@@ -44,12 +43,6 @@ export const SentimentChart = ({ ticker, timeRange }: SentimentChartProps) => {
     refetchInterval: 60000,
     enabled: !!ticker,
   });
-  const twitterQuery = useQuery<SentimentApiResponse, Error>({
-    queryKey: ["sentiment", ticker, "twitter"],
-    queryFn: () => fetchSentiment(ticker, "twitter"),
-    refetchInterval: 60000,
-    enabled: !!ticker,
-  });
   const newsQuery = useQuery<SentimentApiResponse, Error>({
     queryKey: ["sentiment", ticker, "news"],
     queryFn: () => fetchSentiment(ticker, "news"),
@@ -61,7 +54,6 @@ export const SentimentChart = ({ ticker, timeRange }: SentimentChartProps) => {
   const chartData: ChartDataPoint[] = useMemo(() => {
     const allTimestamps = new Set<string>();
     redditQuery.data?.timestamps.forEach((t) => allTimestamps.add(t));
-    twitterQuery.data?.timestamps.forEach((t) => allTimestamps.add(t));
     newsQuery.data?.timestamps.forEach((t) => allTimestamps.add(t));
     const sortedTimestamps = Array.from(allTimestamps).sort();
     return sortedTimestamps.map((timestamp) => {
@@ -72,23 +64,20 @@ export const SentimentChart = ({ ticker, timeRange }: SentimentChartProps) => {
         day: "numeric",
       });
       const redditIdx = redditQuery.data?.timestamps.indexOf(timestamp) ?? -1;
-      const twitterIdx = twitterQuery.data?.timestamps.indexOf(timestamp) ?? -1;
       const newsIdx = newsQuery.data?.timestamps.indexOf(timestamp) ?? -1;
       return {
         time,
         reddit: redditIdx !== -1 ? redditQuery.data?.scores[redditIdx] : undefined,
-        twitter: twitterIdx !== -1 ? twitterQuery.data?.scores[twitterIdx] : undefined,
         news: newsIdx !== -1 ? newsQuery.data?.scores[newsIdx] : undefined,
       };
     });
-  }, [redditQuery.data, twitterQuery.data, newsQuery.data]);
+  }, [redditQuery.data, newsQuery.data]);
 
-  const isLoading = redditQuery.isLoading || twitterQuery.isLoading || newsQuery.isLoading;
-  const isError = redditQuery.isError && twitterQuery.isError && newsQuery.isError;
-  const error = redditQuery.error || twitterQuery.error || newsQuery.error;
+  const isLoading = redditQuery.isLoading || newsQuery.isLoading;
+  const isError = redditQuery.isError && newsQuery.isError;
+  const error = redditQuery.error || newsQuery.error;
   const hasNoData =
     (!redditQuery.data?.scores?.length || redditQuery.isError) &&
-    (!twitterQuery.data?.scores?.length || twitterQuery.isError) &&
     (!newsQuery.data?.scores?.length || newsQuery.isError);
 
   const CustomTooltip = ({ active, payload, label }: any) => {
@@ -150,10 +139,6 @@ export const SentimentChart = ({ ticker, timeRange }: SentimentChartProps) => {
               <span className="text-slate-300">Reddit</span>
             </div>
             <div className="flex items-center space-x-1">
-              <div className="w-3 h-3 bg-blue-400 rounded-full"></div>
-              <span className="text-slate-300">Twitter</span>
-            </div>
-            <div className="flex items-center space-x-1">
               <div className="w-3 h-3 bg-purple-400 rounded-full"></div>
               <span className="text-slate-300">News</span>
             </div>
@@ -168,10 +153,6 @@ export const SentimentChart = ({ ticker, timeRange }: SentimentChartProps) => {
                 <linearGradient id="redditGradient" x1="0" y1="0" x2="0" y2="1">
                   <stop offset="5%" stopColor="#fb923c" stopOpacity={0.3} />
                   <stop offset="95%" stopColor="#fb923c" stopOpacity={0} />
-                </linearGradient>
-                <linearGradient id="twitterGradient" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%" stopColor="#60a5fa" stopOpacity={0.3} />
-                  <stop offset="95%" stopColor="#60a5fa" stopOpacity={0} />
                 </linearGradient>
                 <linearGradient id="newsGradient" x1="0" y1="0" x2="0" y2="1">
                   <stop offset="5%" stopColor="#a78bfa" stopOpacity={0.3} />
@@ -200,22 +181,17 @@ export const SentimentChart = ({ ticker, timeRange }: SentimentChartProps) => {
                 fillOpacity={1}
                 fill="url(#redditGradient)"
                 name="Reddit"
+                connectNulls
               />
-              <Line
-                type="monotone"
-                dataKey="twitter"
-                stroke="#60a5fa"
-                strokeWidth={2}
-                dot={false}
-                name="Twitter"
-              />
-              <Line
+              <Area
                 type="monotone"
                 dataKey="news"
                 stroke="#a78bfa"
-                strokeWidth={2}
-                dot={false}
+                strokeWidth={3}
+                fillOpacity={1}
+                fill="url(#newsGradient)"
                 name="News"
+                connectNulls
               />
             </AreaChart>
           </ResponsiveContainer>

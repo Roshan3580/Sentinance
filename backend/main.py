@@ -95,7 +95,7 @@ async def get_stock_details(ticker: str):
 @app.get("/sentiment/{ticker}", response_model=SentimentResponse)
 async def get_sentiment(
     ticker: str,
-    source: str = Query("reddit", regex="^(reddit|twitter|news)$"),
+    source: str = Query("reddit", regex="^(reddit|news)$"),
     limit: int = Query(20, ge=1, le=100)
 ):
     if source == "reddit":
@@ -129,52 +129,6 @@ async def get_sentiment(
             ))
         if not results:
             raise HTTPException(status_code=404, detail="No Reddit data found for this ticker.")
-        return SentimentResponse(
-            ticker=ticker,
-            timestamps=[r.timestamp for r in results],
-            scores=[r.sentiment for r in results],
-            top_posts=results
-        )
-    elif source == "twitter":
-        # Use snscrape to fetch tweets for the ticker/cashtag
-        try:
-            query = f"${ticker} OR {ticker}"
-            cmd = [
-                "snscrape", "--jsonl", "--max-results", str(limit),
-                f"twitter-search", query
-            ]
-            proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-            tweets = []
-            for line in proc.stdout:
-                tweet = json.loads(line)
-                tweets.append(tweet)
-            proc.stdout.close()
-            proc.wait()
-        except Exception as e:
-            raise HTTPException(status_code=500, detail=f"Error fetching tweets: {e}")
-        sentiment_pipeline = pipeline("sentiment-analysis", model="yiyanghkust/finbert-tone")
-        results = []
-        for tweet in tweets:
-            text = tweet.get("content", "")
-            if not text:
-                continue
-            sentiment_result = sentiment_pipeline(text[:512])[0]
-            label = sentiment_result["label"].lower()
-            score = sentiment_result.get("score", 1.0)
-            if label == "positive":
-                sentiment_score = score if score >= 0.6 else 0.0
-            elif label == "negative":
-                sentiment_score = -score if score >= 0.6 else 0.0
-            else:
-                sentiment_score = 0.0
-            results.append(SentimentMention(
-                source="twitter",
-                sentiment=sentiment_score,
-                timestamp=tweet.get("date", ""),
-                text=text
-            ))
-        if not results:
-            raise HTTPException(status_code=404, detail="No Twitter data found for this ticker.")
         return SentimentResponse(
             ticker=ticker,
             timestamps=[r.timestamp for r in results],
@@ -219,7 +173,7 @@ async def get_sentiment(
             top_posts=results
         )
     else:
-        raise HTTPException(status_code=400, detail="Invalid source. Choose from reddit, twitter, news.")
+        raise HTTPException(status_code=400, detail="Invalid source. Choose from reddit, news.")
 
 @app.get("/stocks/{ticker}/history", response_model=List[StockPricePoint])
 async def get_stock_history(ticker: str, days: int = Query(30, ge=1, le=100)):
