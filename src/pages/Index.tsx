@@ -1,11 +1,9 @@
-import { useState, useEffect } from "react";
-import { SentimentChart } from "@/components/dashboard/SentimentChart";
-import { SentimentHeatmap } from "@/components/dashboard/SentimentHeatmap";
+import { useState } from "react";
 import { TickerSearch } from "@/components/dashboard/TickerSearch";
-import { AlertsPanel } from "@/components/dashboard/AlertsPanel";
-import { NewsPanel } from "@/components/dashboard/NewsPanel";
-import { SentimentOverview } from "@/components/dashboard/SentimentOverview";
-import { TrendingMentions } from "@/components/dashboard/TrendingMentions";
+import { StockDetailsPanel } from "@/components/dashboard/StockDetailsPanel";
+import { SentimentChart } from "@/components/dashboard/SentimentChart";
+import { StockPriceChart } from "@/components/dashboard/StockPriceChart";
+// import { StockPriceChart } from "@/components/dashboard/StockPriceChart"; // To be implemented
 
 const Index = () => {
   const [selectedTicker, setSelectedTicker] = useState("AAPL");
@@ -25,7 +23,6 @@ const Index = () => {
                 AI-Powered Sentiment Tracker
               </span>
             </div>
-            
             <div className="flex items-center space-x-4">
               <select 
                 value={timeRange} 
@@ -37,49 +34,24 @@ const Index = () => {
                 <option value="7d">7 Days</option>
                 <option value="30d">30 Days</option>
               </select>
-              
               <div className="h-2 w-2 bg-green-400 rounded-full animate-pulse"></div>
               <span className="text-sm text-slate-300">Live</span>
             </div>
           </div>
         </div>
       </header>
-
       {/* Main Content */}
-      <main className="max-w-7xl mx-auto px-6 py-6">
-        {/* Top Row - Search and Overview */}
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-6">
-          <div className="lg:col-span-1">
-            <TickerSearch 
-              selectedTicker={selectedTicker} 
-              onTickerChange={setSelectedTicker} 
-            />
-          </div>
-          <div className="lg:col-span-2">
-            <SentimentOverview ticker={selectedTicker} />
-          </div>
-        </div>
-
-        {/* Charts Row */}
-        <div className="grid grid-cols-1 xl:grid-cols-3 gap-6 mb-6">
-          <div className="xl:col-span-2">
-            <SentimentChart ticker={selectedTicker} timeRange={timeRange} />
-          </div>
-          <div className="xl:col-span-1">
-            <TrendingMentions ticker={selectedTicker} />
-          </div>
-        </div>
-
-        {/* Heatmap and Analysis Row */}
-        <div className="grid grid-cols-1 xl:grid-cols-2 gap-6 mb-6">
-          <SentimentHeatmap timeRange={timeRange} />
-          <NewsPanel ticker={selectedTicker} />
-        </div>
-
-        {/* Bottom Row - Alerts */}
-        <div className="grid grid-cols-1">
-          <AlertsPanel />
-        </div>
+      <main className="max-w-7xl mx-auto px-6 py-8 grid grid-cols-1 md:grid-cols-4 gap-8">
+        {/* Sidebar */}
+        <aside className="md:col-span-1">
+          <TickerSearch selectedTicker={selectedTicker} onTickerChange={setSelectedTicker} />
+        </aside>
+        {/* Main Dashboard */}
+        <section className="md:col-span-3 space-y-6">
+          <StockDetailsPanel ticker={selectedTicker} />
+          <StockPriceChart ticker={selectedTicker} />
+          <SentimentChart ticker={selectedTicker} timeRange={timeRange} />
+        </section>
       </main>
     </div>
   );

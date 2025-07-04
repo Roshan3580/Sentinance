@@ -1,13 +1,16 @@
 import os
 from dotenv import load_dotenv
 load_dotenv()
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Query
 from pydantic import BaseModel
-from typing import List
+from typing import List, Optional
 import praw
 from transformers import pipeline
 from datetime import datetime, timezone
 from fastapi.middleware.cors import CORSMiddleware
+import httpx
+import subprocess
+import json
 
 app = FastAPI(title="Sentinance Backend")
 app.add_middleware(
@@ -17,44 +20,99 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-class SentimentResponse(BaseModel):
-    ticker: str
+
+ALPHA_VANTAGE_API_KEY = os.getenv("ALPHA_VANTAGE_API_KEY")
+NEWSAPI_KEY = os.getenv("NEWSAPI_KEY")
+REDDIT_CLIENT_ID = os.getenv("REDDIT_CLIENT_ID")
+REDDIT_CLIENT_SECRET = os.getenv("REDDIT_CLIENT_SECRET")
+REDDIT_USER_AGENT = os.getenv("REDDIT_USER_AGENT")
+
+# --- Models ---
+class StockListItem(BaseModel):
+    symbol: str
+    name: str
+    type: str = "Equity"
+    region: str = "United States"
+
+class StockDetails(BaseModel):
+    symbol: str
+    name: str
+    price: float
+    market_cap: float = 0.0
+    currency: str = "USD"
+    last_refreshed: str
+
+class SentimentMention(BaseModel):
     source: str
     sentiment: float
     timestamp: str
     text: str
 
-# Load sentiment analysis pipeline (FinBERT or similar)
-sentiment_pipeline = pipeline("sentiment-analysis", model="yiyanghkust/finbert-tone")
+class SentimentResponse(BaseModel):
+    ticker: str
+    timestamps: List[str]
+    scores: List[float]
+    top_posts: List[SentimentMention]
 
-# Reddit API credentials from environment variables
-REDDIT_CLIENT_ID = os.getenv("REDDIT_CLIENT_ID")
-REDDIT_CLIENT_SECRET = os.getenv("REDDIT_CLIENT_SECRET")
-REDDIT_USER_AGENT = os.getenv("REDDIT_USER_AGENT", "sentinance-app")
+class StockPricePoint(BaseModel):
+    date: str
+    open: float
+    high: float
+    low: float
+    close: float
+    volume: int
 
-if not (REDDIT_CLIENT_ID and REDDIT_CLIENT_SECRET):
-    raise RuntimeError("Reddit API credentials not set in environment variables.")
+# --- Endpoints ---
+@app.get("/stocks/list", response_model=List[StockListItem])
+async def get_stocks_list():
+    # For demo: Use a static list or fetch from Alpha Vantage symbol search
+    # Here, we use a static list for simplicity
+    return [
+        {"symbol": "AAPL", "name": "Apple Inc."},
+        {"symbol": "MSFT", "name": "Microsoft Corporation"},
+        {"symbol": "GOOGL", "name": "Alphabet Inc."},
+        {"symbol": "TSLA", "name": "Tesla Inc."},
+        {"symbol": "AMZN", "name": "Amazon.com Inc."},
+        {"symbol": "NVDA", "name": "NVIDIA Corporation"},
+    ]
 
-reddit = praw.Reddit(
-    client_id=REDDIT_CLIENT_ID,
-    client_secret=REDDIT_CLIENT_SECRET,
-    user_agent=REDDIT_USER_AGENT
-)
+@app.get("/stocks/{ticker}", response_model=StockDetails)
+async def get_stock_details(ticker: str):
+    url = f"https://www.alphavantage.co/query?function=GLOBAL_QUOTE&symbol={ticker}&apikey={ALPHA_VANTAGE_API_KEY}"
+    async with httpx.AsyncClient() as client:
+        r = await client.get(url)
+        data = r.json()
+    if "Global Quote" not in data or not data["Global Quote"]:
+        raise HTTPException(status_code=404, detail="Stock not found")
+    quote = data["Global Quote"]
+    return StockDetails(
+        symbol=quote["01. symbol"],
+        name=ticker,  # Alpha Vantage free API does not return company name here
+        price=float(quote["05. price"]),
+        last_refreshed=datetime.now().isoformat()
+    )
 
-@app.get("/")
-def root():
-    return {"message": "Sentinance Backend is running."}
-
-@app.get("/sentiment/reddit")
-def get_reddit_sentiment(ticker: str, limit: int = 10):
-    try:
+@app.get("/sentiment/{ticker}", response_model=SentimentResponse)
+async def get_sentiment(
+    ticker: str,
+    source: str = Query("reddit", regex="^(reddit|twitter|news)$"),
+    limit: int = Query(20, ge=1, le=100)
+):
+    if source == "reddit":
+        # Fetch Reddit posts/comments using PRAW
+        reddit = praw.Reddit(
+            client_id=REDDIT_CLIENT_ID,
+            client_secret=REDDIT_CLIENT_SECRET,
+            user_agent=REDDIT_USER_AGENT
+        )
+        sentiment_pipeline = pipeline("sentiment-analysis", model="yiyanghkust/finbert-tone")
         subreddit = reddit.subreddit("stocks+wallstreetbets")
         query = f"{ticker}"
         posts = subreddit.search(query, sort="new", limit=limit)
         results = []
         for post in posts:
             text = post.title + ("\n" + post.selftext if post.selftext else "")
-            sentiment_result = sentiment_pipeline(text[:512])[0]  # Truncate to 512 chars
+            sentiment_result = sentiment_pipeline(text[:512])[0]
             label = sentiment_result["label"].lower()
             score = sentiment_result.get("score", 1.0)
             if label == "positive":
@@ -63,22 +121,124 @@ def get_reddit_sentiment(ticker: str, limit: int = 10):
                 sentiment_score = -score if score >= 0.6 else 0.0
             else:
                 sentiment_score = 0.0
-            results.append(SentimentResponse(
-                ticker=ticker,
+            results.append(SentimentMention(
                 source="reddit",
                 sentiment=sentiment_score,
                 timestamp=datetime.fromtimestamp(post.created_utc, tz=timezone.utc).isoformat(),
                 text=text
             ))
-        # Transform to the expected format
-        timestamps = [r.timestamp for r in results]
-        scores = [r.sentiment for r in results]
-        top_posts = [r.dict() for r in results]
-        return {
-            "ticker": ticker,
-            "timestamps": timestamps,
-            "scores": scores,
-            "top_posts": top_posts
-        }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e)) 
+        if not results:
+            raise HTTPException(status_code=404, detail="No Reddit data found for this ticker.")
+        return SentimentResponse(
+            ticker=ticker,
+            timestamps=[r.timestamp for r in results],
+            scores=[r.sentiment for r in results],
+            top_posts=results
+        )
+    elif source == "twitter":
+        # Use snscrape to fetch tweets for the ticker/cashtag
+        try:
+            query = f"${ticker} OR {ticker}"
+            cmd = [
+                "snscrape", "--jsonl", "--max-results", str(limit),
+                f"twitter-search", query
+            ]
+            proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            tweets = []
+            for line in proc.stdout:
+                tweet = json.loads(line)
+                tweets.append(tweet)
+            proc.stdout.close()
+            proc.wait()
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Error fetching tweets: {e}")
+        sentiment_pipeline = pipeline("sentiment-analysis", model="yiyanghkust/finbert-tone")
+        results = []
+        for tweet in tweets:
+            text = tweet.get("content", "")
+            if not text:
+                continue
+            sentiment_result = sentiment_pipeline(text[:512])[0]
+            label = sentiment_result["label"].lower()
+            score = sentiment_result.get("score", 1.0)
+            if label == "positive":
+                sentiment_score = score if score >= 0.6 else 0.0
+            elif label == "negative":
+                sentiment_score = -score if score >= 0.6 else 0.0
+            else:
+                sentiment_score = 0.0
+            results.append(SentimentMention(
+                source="twitter",
+                sentiment=sentiment_score,
+                timestamp=tweet.get("date", ""),
+                text=text
+            ))
+        if not results:
+            raise HTTPException(status_code=404, detail="No Twitter data found for this ticker.")
+        return SentimentResponse(
+            ticker=ticker,
+            timestamps=[r.timestamp for r in results],
+            scores=[r.sentiment for r in results],
+            top_posts=results
+        )
+    elif source == "news":
+        # Fetch news headlines using NewsAPI
+        url = f"https://newsapi.org/v2/everything?q={ticker}&sortBy=publishedAt&apiKey={NEWSAPI_KEY}&pageSize={limit}"
+        async with httpx.AsyncClient() as client:
+            r = await client.get(url)
+            data = r.json()
+        if "articles" not in data or not data["articles"]:
+            raise HTTPException(status_code=404, detail="No news data found for this ticker.")
+        sentiment_pipeline = pipeline("sentiment-analysis", model="yiyanghkust/finbert-tone")
+        results = []
+        for article in data["articles"]:
+            text = article.get("title", "") + ("\n" + article.get("description", "") if article.get("description") else "")
+            if not text:
+                continue
+            sentiment_result = sentiment_pipeline(text[:512])[0]
+            label = sentiment_result["label"].lower()
+            score = sentiment_result.get("score", 1.0)
+            if label == "positive":
+                sentiment_score = score if score >= 0.6 else 0.0
+            elif label == "negative":
+                sentiment_score = -score if score >= 0.6 else 0.0
+            else:
+                sentiment_score = 0.0
+            results.append(SentimentMention(
+                source="news",
+                sentiment=sentiment_score,
+                timestamp=article.get("publishedAt", ""),
+                text=text
+            ))
+        if not results:
+            raise HTTPException(status_code=404, detail="No news data found for this ticker.")
+        return SentimentResponse(
+            ticker=ticker,
+            timestamps=[r.timestamp for r in results],
+            scores=[r.sentiment for r in results],
+            top_posts=results
+        )
+    else:
+        raise HTTPException(status_code=400, detail="Invalid source. Choose from reddit, twitter, news.")
+
+@app.get("/stocks/{ticker}/history", response_model=List[StockPricePoint])
+async def get_stock_history(ticker: str, days: int = Query(30, ge=1, le=100)):
+    url = f"https://www.alphavantage.co/query?function=TIME_SERIES_DAILY&symbol={ticker}&apikey={ALPHA_VANTAGE_API_KEY}"
+    async with httpx.AsyncClient() as client:
+        r = await client.get(url)
+        data = r.json()
+    if "Time Series (Daily)" not in data:
+        raise HTTPException(status_code=404, detail="No price history found")
+    series = data["Time Series (Daily)"]
+    points = []
+    for date_str in sorted(series.keys(), reverse=True)[:days]:
+        day = series[date_str]
+        points.append(StockPricePoint(
+            date=date_str,
+            open=float(day["1. open"]),
+            high=float(day["2. high"]),
+            low=float(day["3. low"]),
+            close=float(day["4. close"]),
+            volume=int(day["5. volume"])
+        ))
+    return list(reversed(points))  # Oldest first 

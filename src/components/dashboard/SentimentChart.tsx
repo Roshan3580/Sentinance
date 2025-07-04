@@ -16,65 +16,91 @@ interface SentimentApiResponse {
   ticker: string;
   timestamps: string[];
   scores: number[];
-  top_posts: any[]; // Adjust type as needed for future use
+  top_posts: any[];
 }
 
 interface SentimentChartProps {
   ticker: string;
-  timeRange: string; // Currently unused, but keep for future extensibility
+  timeRange: string;
 }
 
 interface ChartDataPoint {
   time: string;
-  score: number;
+  reddit?: number;
+  twitter?: number;
+  news?: number;
 }
 
-const fetchSentiment = async (ticker: string): Promise<SentimentApiResponse> => {
-  const res = await fetch(
-    `http://localhost:8000/sentiment/reddit?ticker=${encodeURIComponent(ticker)}`
-  );
-  if (!res.ok) {
-    throw new Error("Failed to fetch sentiment data");
-  }
+const fetchSentiment = async (ticker: string, source: string): Promise<SentimentApiResponse> => {
+  const res = await fetch(`http://localhost:8000/sentiment/${ticker}?source=${source}`);
+  if (!res.ok) throw new Error("No data available");
   return res.json();
 };
 
 export const SentimentChart = ({ ticker, timeRange }: SentimentChartProps) => {
-  const {
-    data,
-    isLoading,
-    isError,
-    error,
-    refetch,
-  } = useQuery<SentimentApiResponse, Error>({
-    queryKey: ["sentiment", "reddit", ticker],
-    queryFn: () => fetchSentiment(ticker),
-    refetchInterval: 60000, // 60 seconds
+  const redditQuery = useQuery<SentimentApiResponse, Error>({
+    queryKey: ["sentiment", ticker, "reddit"],
+    queryFn: () => fetchSentiment(ticker, "reddit"),
+    refetchInterval: 60000,
+    enabled: !!ticker,
+  });
+  const twitterQuery = useQuery<SentimentApiResponse, Error>({
+    queryKey: ["sentiment", ticker, "twitter"],
+    queryFn: () => fetchSentiment(ticker, "twitter"),
+    refetchInterval: 60000,
+    enabled: !!ticker,
+  });
+  const newsQuery = useQuery<SentimentApiResponse, Error>({
+    queryKey: ["sentiment", ticker, "news"],
+    queryFn: () => fetchSentiment(ticker, "news"),
+    refetchInterval: 60000,
+    enabled: !!ticker,
   });
 
-  // Transform API data for Recharts
+  // Merge data by timestamp
   const chartData: ChartDataPoint[] = useMemo(() => {
-    if (!data || !data.timestamps || !data.scores) return [];
-    return data.timestamps.map((time, idx) => ({
-      time: new Date(time).toLocaleString("en-US", {
+    const allTimestamps = new Set<string>();
+    redditQuery.data?.timestamps.forEach((t) => allTimestamps.add(t));
+    twitterQuery.data?.timestamps.forEach((t) => allTimestamps.add(t));
+    newsQuery.data?.timestamps.forEach((t) => allTimestamps.add(t));
+    const sortedTimestamps = Array.from(allTimestamps).sort();
+    return sortedTimestamps.map((timestamp) => {
+      const time = new Date(timestamp).toLocaleString("en-US", {
         hour: "2-digit",
         minute: "2-digit",
         month: "short",
         day: "numeric",
-      }),
-      score: data.scores[idx],
-    }));
-  }, [data]);
+      });
+      const redditIdx = redditQuery.data?.timestamps.indexOf(timestamp) ?? -1;
+      const twitterIdx = twitterQuery.data?.timestamps.indexOf(timestamp) ?? -1;
+      const newsIdx = newsQuery.data?.timestamps.indexOf(timestamp) ?? -1;
+      return {
+        time,
+        reddit: redditIdx !== -1 ? redditQuery.data?.scores[redditIdx] : undefined,
+        twitter: twitterIdx !== -1 ? twitterQuery.data?.scores[twitterIdx] : undefined,
+        news: newsIdx !== -1 ? newsQuery.data?.scores[newsIdx] : undefined,
+      };
+    });
+  }, [redditQuery.data, twitterQuery.data, newsQuery.data]);
 
-  // Custom tooltip for Recharts
+  const isLoading = redditQuery.isLoading || twitterQuery.isLoading || newsQuery.isLoading;
+  const isError = redditQuery.isError && twitterQuery.isError && newsQuery.isError;
+  const error = redditQuery.error || twitterQuery.error || newsQuery.error;
+  const hasNoData =
+    (!redditQuery.data?.scores?.length || redditQuery.isError) &&
+    (!twitterQuery.data?.scores?.length || twitterQuery.isError) &&
+    (!newsQuery.data?.scores?.length || newsQuery.isError);
+
   const CustomTooltip = ({ active, payload, label }: any) => {
     if (active && payload && payload.length) {
       return (
         <div className="bg-slate-800 border border-slate-600 rounded-lg p-3 shadow-lg">
           <p className="text-slate-300 text-sm mb-2">{label}</p>
-          <p className="text-sm" style={{ color: "#fb923c" }}>
-            Sentiment: {(payload[0].value * 100).toFixed(1)}%
-          </p>
+          {payload.map((entry: any, index: number) => (
+            <p key={index} className="text-sm" style={{ color: entry.color }}>
+              {entry.name}: {(entry.value * 100).toFixed(1)}%
+            </p>
+          ))}
         </div>
       );
     }
@@ -96,7 +122,7 @@ export const SentimentChart = ({ ticker, timeRange }: SentimentChartProps) => {
     );
   }
 
-  if (isError) {
+  if (isError || hasNoData) {
     return (
       <Card className="bg-slate-800/50 border-slate-700/50 backdrop-blur-sm">
         <CardHeader className="pb-3">
@@ -105,14 +131,8 @@ export const SentimentChart = ({ ticker, timeRange }: SentimentChartProps) => {
         <CardContent>
           <div className="h-80 flex items-center justify-center">
             <span className="text-red-400">
-              Error loading sentiment data: {error?.message}
+              No sentiment data available for this ticker.
             </span>
-            <button
-              className="ml-4 px-3 py-1 bg-blue-600 text-white rounded hover:bg-blue-700 transition"
-              onClick={() => refetch()}
-            >
-              Retry
-            </button>
           </div>
         </CardContent>
       </Card>
@@ -129,6 +149,14 @@ export const SentimentChart = ({ ticker, timeRange }: SentimentChartProps) => {
               <div className="w-3 h-3 bg-orange-400 rounded-full"></div>
               <span className="text-slate-300">Reddit</span>
             </div>
+            <div className="flex items-center space-x-1">
+              <div className="w-3 h-3 bg-blue-400 rounded-full"></div>
+              <span className="text-slate-300">Twitter</span>
+            </div>
+            <div className="flex items-center space-x-1">
+              <div className="w-3 h-3 bg-purple-400 rounded-full"></div>
+              <span className="text-slate-300">News</span>
+            </div>
           </div>
         </CardTitle>
       </CardHeader>
@@ -140,6 +168,14 @@ export const SentimentChart = ({ ticker, timeRange }: SentimentChartProps) => {
                 <linearGradient id="redditGradient" x1="0" y1="0" x2="0" y2="1">
                   <stop offset="5%" stopColor="#fb923c" stopOpacity={0.3} />
                   <stop offset="95%" stopColor="#fb923c" stopOpacity={0} />
+                </linearGradient>
+                <linearGradient id="twitterGradient" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="5%" stopColor="#60a5fa" stopOpacity={0.3} />
+                  <stop offset="95%" stopColor="#60a5fa" stopOpacity={0} />
+                </linearGradient>
+                <linearGradient id="newsGradient" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="5%" stopColor="#a78bfa" stopOpacity={0.3} />
+                  <stop offset="95%" stopColor="#a78bfa" stopOpacity={0} />
                 </linearGradient>
               </defs>
               <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
@@ -158,18 +194,28 @@ export const SentimentChart = ({ ticker, timeRange }: SentimentChartProps) => {
               <Tooltip content={<CustomTooltip />} />
               <Area
                 type="monotone"
-                dataKey="score"
+                dataKey="reddit"
                 stroke="#fb923c"
                 strokeWidth={3}
                 fillOpacity={1}
                 fill="url(#redditGradient)"
+                name="Reddit"
               />
               <Line
                 type="monotone"
-                dataKey="score"
-                stroke="#fb923c"
+                dataKey="twitter"
+                stroke="#60a5fa"
                 strokeWidth={2}
                 dot={false}
+                name="Twitter"
+              />
+              <Line
+                type="monotone"
+                dataKey="news"
+                stroke="#a78bfa"
+                strokeWidth={2}
+                dot={false}
+                name="News"
               />
             </AreaChart>
           </ResponsiveContainer>
