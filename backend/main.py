@@ -6,7 +6,7 @@ from pydantic import BaseModel
 from typing import List, Optional
 import praw
 from transformers import pipeline
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from fastapi.middleware.cors import CORSMiddleware
 import httpx
 import subprocess
@@ -22,7 +22,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-ALPHA_VANTAGE_API_KEY = os.getenv("ALPHA_VANTAGE_API_KEY")
+POLYGON_API_KEY = os.getenv("POLYGON_API_KEY")
 NEWSAPI_KEY = os.getenv("NEWSAPI_KEY")
 REDDIT_CLIENT_ID = os.getenv("REDDIT_CLIENT_ID")
 REDDIT_CLIENT_SECRET = os.getenv("REDDIT_CLIENT_SECRET")
@@ -66,31 +66,44 @@ class StockPricePoint(BaseModel):
 # --- Endpoints ---
 @app.get("/stocks/list", response_model=List[StockListItem])
 async def get_stocks_list():
-    # For demo: Use a static list or fetch from Alpha Vantage symbol search
-    # Here, we use a static list for simplicity
+    with open(os.path.join(os.path.dirname(__file__), "data/tickers.json"), "r") as f:
+        tickers = json.load(f)
     return [
-        {"symbol": "AAPL", "name": "Apple Inc."},
-        {"symbol": "MSFT", "name": "Microsoft Corporation"},
-        {"symbol": "GOOGL", "name": "Alphabet Inc."},
-        {"symbol": "TSLA", "name": "Tesla Inc."},
-        {"symbol": "AMZN", "name": "Amazon.com Inc."},
-        {"symbol": "NVDA", "name": "NVIDIA Corporation"},
+        StockListItem(
+            symbol=item["symbol"],
+            name=item["name"],
+            type="Equity",
+            region="United States"
+        )
+        for item in tickers
     ]
 
 @app.get("/stocks/{ticker}", response_model=StockDetails)
 async def get_stock_details(ticker: str):
-    url = f"https://www.alphavantage.co/query?function=GLOBAL_QUOTE&symbol={ticker}&apikey={ALPHA_VANTAGE_API_KEY}"
+    url = f"https://api.polygon.io/v2/aggs/ticker/{ticker}/prev?adjusted=true&apiKey={POLYGON_API_KEY}"
+    details_url = f"https://api.polygon.io/v3/reference/tickers/{ticker}?apiKey={POLYGON_API_KEY}"
+
     async with httpx.AsyncClient() as client:
+        # Get previous day's close
         r = await client.get(url)
         data = r.json()
-    if "Global Quote" not in data or not data["Global Quote"]:
-        raise HTTPException(status_code=404, detail="Stock not found")
-    quote = data["Global Quote"]
+        if "results" not in data or not data["results"]:
+            raise HTTPException(status_code=404, detail="Stock not found")
+        
+        # Get ticker details
+        details_r = await client.get(details_url)
+        details_data = details_r.json()
+        
+        name = details_data.get("results", {}).get("name", ticker)
+        market_cap = details_data.get("results", {}).get("market_cap", 0)
+
+    quote = data["results"][0]
     return StockDetails(
-        symbol=quote["01. symbol"],
-        name=ticker,  # Alpha Vantage free API does not return company name here
-        price=float(quote["05. price"]),
-        last_refreshed=datetime.now().isoformat()
+        symbol=data["ticker"],
+        name=name,
+        price=float(quote["c"]),
+        market_cap=market_cap,
+        last_refreshed=datetime.fromtimestamp(quote["t"] / 1000).isoformat()
     )
 
 @app.get("/sentiment/{ticker}", response_model=SentimentResponse)
@@ -178,86 +191,27 @@ async def get_sentiment(
 
 @app.get("/stocks/{ticker}/history", response_model=List[StockPricePoint])
 async def get_stock_history(ticker: str, days: int = Query(30, ge=1, le=100)):
-    url = f"https://www.alphavantage.co/query?function=TIME_SERIES_DAILY&symbol={ticker}&apikey={ALPHA_VANTAGE_API_KEY}"
+    end_date = datetime.now().strftime('%Y-%m-%d')
+    start_date = (datetime.now() - timedelta(days=days)).strftime('%Y-%m-%d')
+    
+    url = f"https://api.polygon.io/v2/aggs/ticker/{ticker}/range/1/day/{start_date}/{end_date}?adjusted=true&sort=asc&apiKey={POLYGON_API_KEY}"
+    
     async with httpx.AsyncClient() as client:
         r = await client.get(url)
         data = r.json()
-    if "Time Series (Daily)" not in data:
+    
+    if "results" not in data:
         raise HTTPException(status_code=404, detail="No price history found")
-    series = data["Time Series (Daily)"]
-    points = []
-    for date_str in sorted(series.keys(), reverse=True)[:days]:
-        day = series[date_str]
-        points.append(StockPricePoint(
-            date=date_str,
-            open=float(day["1. open"]),
-            high=float(day["2. high"]),
-            low=float(day["3. low"]),
-            close=float(day["4. close"]),
-            volume=int(day["5. volume"])
-        ))
-    return list(reversed(points))  # Oldest first
-
-@app.get("/stocks/top-movers")
-async def get_top_movers():
-    tickers = [
-        {"symbol": "AAPL", "name": "Apple Inc."},
-        {"symbol": "MSFT", "name": "Microsoft Corporation"},
-        {"symbol": "GOOGL", "name": "Alphabet Inc."},
-        {"symbol": "TSLA", "name": "Tesla Inc."},
-        {"symbol": "AMZN", "name": "Amazon.com Inc."},
-        {"symbol": "NVDA", "name": "NVIDIA Corporation"},
+    
+    points = [
+        StockPricePoint(
+            date=datetime.fromtimestamp(p["t"] / 1000).strftime('%Y-%m-%d'),
+            open=float(p["o"]),
+            high=float(p["h"]),
+            low=float(p["l"]),
+            close=float(p["c"]),
+            volume=int(p["v"])
+        ) for p in data["results"]
     ]
-    results = []
-    async with httpx.AsyncClient() as client:
-        for t in tickers:
-            url = f"https://www.alphavantage.co/query?function=GLOBAL_QUOTE&symbol={t['symbol']}&apikey={ALPHA_VANTAGE_API_KEY}"
-            r = await client.get(url)
-            data = r.json()
-            quote = data.get("Global Quote", {})
-            try:
-                price = float(quote["05. price"])
-                prev_close = float(quote["08. previous close"])
-                change_percent = ((price - prev_close) / prev_close) * 100 if prev_close else 0.0
-            except Exception:
-                price = 0.0
-                change_percent = 0.0
-            results.append({
-                "symbol": t["symbol"],
-                "name": t["name"],
-                "price": price,
-                "change_percent": change_percent,
-            })
-    sorted_results = sorted(results, key=lambda x: x["change_percent"], reverse=True)
-    gainers = sorted_results[:3]
-    losers = sorted(results, key=lambda x: x["change_percent"])[:3]
-    return JSONResponse({"gainers": gainers, "losers": losers})
-
-@app.get("/stocks/most-active")
-async def get_most_active():
-    tickers = [
-        {"symbol": "AAPL", "name": "Apple Inc."},
-        {"symbol": "MSFT", "name": "Microsoft Corporation"},
-        {"symbol": "GOOGL", "name": "Alphabet Inc."},
-        {"symbol": "TSLA", "name": "Tesla Inc."},
-        {"symbol": "AMZN", "name": "Amazon.com Inc."},
-        {"symbol": "NVDA", "name": "NVIDIA Corporation"},
-    ]
-    results = []
-    async with httpx.AsyncClient() as client:
-        for t in tickers:
-            url = f"https://www.alphavantage.co/query?function=GLOBAL_QUOTE&symbol={t['symbol']}&apikey={ALPHA_VANTAGE_API_KEY}"
-            r = await client.get(url)
-            data = r.json()
-            quote = data.get("Global Quote", {})
-            try:
-                volume = int(quote["06. volume"])
-            except Exception:
-                volume = 0
-            results.append({
-                "symbol": t["symbol"],
-                "name": t["name"],
-                "volume": volume,
-            })
-    sorted_results = sorted(results, key=lambda x: x["volume"], reverse=True)
-    return JSONResponse({"most_active": sorted_results[:5]}) 
+    
+    return points 

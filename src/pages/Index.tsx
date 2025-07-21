@@ -68,81 +68,28 @@ function RedditPanel({ ticker }: { ticker: string }) {
   );
 }
 
-function TopMoversPanel({ type, data, isLoading, isError }: { type: 'gainers' | 'losers', data: any[], isLoading: boolean, isError: boolean }) {
-  if (isLoading) {
-    return <div className="bg-slate-800/50 border border-slate-700/50 rounded-lg p-4 flex items-center justify-center h-32 text-slate-400 animate-pulse">Loading {type}...</div>;
-  }
-  if (isError) {
-    return <div className="bg-slate-800/50 border border-slate-700/50 rounded-lg p-4 flex items-center justify-center h-32 text-red-400">Failed to load {type}.</div>;
-  }
-  return (
-    <div className="bg-slate-800/50 border border-slate-700/50 rounded-lg p-4">
-      <div className="text-lg font-semibold text-white mb-2">Top {type === 'gainers' ? 'Gainers' : 'Losers'}</div>
-      <ul className="space-y-2">
-        {data.map((item) => (
-          <li key={item.symbol} className="flex items-center justify-between">
-            <span className="font-medium text-slate-200">{item.symbol}</span>
-            <span className="text-xs text-slate-400 ml-2">{item.name}</span>
-            <span className={type === 'gainers' ? 'text-green-400 font-bold' : 'text-red-400 font-bold'}>
-              {item.change_percent > 0 ? '+' : ''}{item.change_percent.toFixed(2)}%
-            </span>
-          </li>
-        ))}
-      </ul>
-    </div>
-  );
-}
-
-function MostActivePanel() {
-  const { data, isLoading, isError } = useQuery<any, Error>({
-    queryKey: ["most-active"],
+function TickerHeaderDetails({ selectedTicker }: { selectedTicker: string }) {
+  const { data, isLoading } = useQuery<any, Error>({
+    queryKey: ["stock", selectedTicker],
     queryFn: async () => {
-      const res = await fetch("http://localhost:8000/stocks/most-active");
-      if (!res.ok) throw new Error("Failed to fetch most active stocks");
+      const res = await fetch(`http://localhost:8000/stocks/${selectedTicker}`);
+      if (!res.ok) throw new Error("Failed to fetch stock details");
       return res.json();
     },
-    refetchInterval: 60000,
-  });
-  if (isLoading) {
-    return <div className="bg-slate-800/50 border border-slate-700/50 rounded-lg p-4 flex items-center justify-center h-32 text-slate-400 animate-pulse">Loading most active stocks...</div>;
-  }
-  if (isError) {
-    return <div className="bg-slate-800/50 border border-slate-700/50 rounded-lg p-4 flex items-center justify-center h-32 text-red-400">Failed to load most active stocks.</div>;
-  }
-  return (
-    <div className="bg-slate-800/50 border border-slate-700/50 rounded-lg p-4 mb-2">
-      <div className="text-lg font-semibold text-white mb-2">Most Active Stocks (By Volume)</div>
-      <ul className="space-y-2">
-        {data?.most_active?.map((item: any) => (
-          <li key={item.symbol} className="flex items-center justify-between">
-            <span className="font-medium text-slate-200">{item.symbol}</span>
-            <span className="text-xs text-slate-400 ml-2">{item.name}</span>
-            <span className="text-xs text-blue-400 font-bold">{item.volume.toLocaleString()}</span>
-          </li>
-        ))}
-      </ul>
-    </div>
-  );
-}
-
-function TopMoversFetcher() {
-  const { data, isLoading, isError } = useQuery<any, Error>({
-    queryKey: ["top-movers"],
-    queryFn: async () => {
-      const res = await fetch("http://localhost:8000/stocks/top-movers");
-      if (!res.ok) throw new Error("Failed to fetch top movers");
-      return res.json();
-    },
-    refetchInterval: 60000,
+    enabled: !!selectedTicker,
+    staleTime: 60 * 1000,
   });
   return (
-    <div className="flex flex-col md:flex-row gap-6">
-      <div className="flex-1 min-w-0 flex flex-col">
-        <TopMoversPanel type="gainers" data={data?.gainers || []} isLoading={isLoading} isError={isError} />
-      </div>
-      <div className="flex-1 min-w-0 flex flex-col">
-        <TopMoversPanel type="losers" data={data?.losers || []} isLoading={isLoading} isError={isError} />
-      </div>
+    <div className="bg-slate-700 rounded p-2 flex items-center gap-2 min-w-[120px]">
+      <span className="text-base font-bold text-white">{selectedTicker}</span>
+      {isLoading ? (
+        <span className="text-xs text-slate-400 ml-2 animate-pulse">Loading...</span>
+      ) : data ? (
+        <>
+          <span className="text-xs text-slate-300 ml-2">{data.name}</span>
+          <span className="text-green-400 font-semibold ml-2">${data.price?.toFixed(2)}</span>
+        </>
+      ) : null}
     </div>
   );
 }
@@ -157,14 +104,14 @@ const Index = () => {
       <header className="relative z-50 border-b border-slate-700/50 bg-slate-900/80 backdrop-blur-sm">
         <div className="max-w-7xl mx-auto px-6 py-4">
           <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 w-full">
-            <div className="flex flex-row items-center w-full">
+            <div className="flex flex-row items-center w-full gap-4">
               <div className="flex-shrink-0 flex items-center" style={{ minWidth: 0 }}>
                 <h1 className="text-2xl font-bold bg-gradient-to-r from-blue-400 to-cyan-400 bg-clip-text text-transparent">
                   Sentinance
                 </h1>
               </div>
-              <div className="flex-1 flex justify-center items-center min-w-0 px-4">
-                <div className="w-full max-w-xs"><TickerSearch selectedTicker={selectedTicker} onTickerChange={setSelectedTicker} /></div>
+              <div className="flex-1 flex items-center min-w-0">
+                <div className="w-full max-w-lg"><TickerSearch selectedTicker={selectedTicker} onTickerChange={setSelectedTicker} hideDetails /></div>
               </div>
               <div className="flex-shrink-0 flex items-center space-x-4">
                 <Tabs defaultValue={tab} onValueChange={setTab} className="w-auto">
@@ -180,10 +127,14 @@ const Index = () => {
                     </TabsTrigger>
                   </TabsList>
                 </Tabs>
-                <div className="h-2 w-2 bg-green-400 rounded-full animate-pulse ml-4"></div>
-                <span className="text-sm text-slate-300">Live</span>
+              </div>
+              {/* Ticker details moved here, right of tabs */}
+              <div className="hidden md:flex flex-col items-start ml-6 min-w-[200px]">
+                <TickerHeaderDetails selectedTicker={selectedTicker} />
               </div>
             </div>
+            {/* On mobile, show ticker details below */}
+            <div className="flex md:hidden mt-2"><TickerHeaderDetails selectedTicker={selectedTicker} /></div>
           </div>
         </div>
       </header>
@@ -195,8 +146,6 @@ const Index = () => {
               <div>
                 <StockDetailsPanel ticker={selectedTicker} />
               </div>
-              <MostActivePanel />
-              <TopMoversFetcher />
               <div className="flex flex-col md:flex-row gap-6">
                 <div className="flex-1 min-w-0 flex flex-col">
                   <StockPriceChart ticker={selectedTicker} />
@@ -221,7 +170,8 @@ const Index = () => {
             <div className="space-y-6">
               <div className="bg-slate-800/50 border border-slate-700/50 rounded-lg p-8 text-white">
                 <h2 className="text-2xl font-bold mb-2">About Sentinance</h2>
-                <p className="text-slate-300">This dashboard provides real-time stock data and sentiment analysis from Reddit and news sources. More info coming soon.</p>
+                <p className="text-slate-300">Sentinance is a smart, all-in-one stock market dashboard designed to give traders, investors, and enthusiasts a deeper edge. By combining real-time stock data with AI-powered sentiment analysis from both financial news and Reddit, Sentinance helps you go beyond just numbers — and understand the why behind market moves.
+Whether you're tracking your favorite tickers or staying ahead of the latest trends, Sentinance brings together price action, volume insights, top gainers/losers, and emotional market signals — all in one clean, intuitive interface. Built with a modern full-stack architecture, Sentinance is fast, reliable, and extensible — made for anyone who wants to trade smarter.</p>
               </div>
             </div>
           </TabsContent>
@@ -232,3 +182,4 @@ const Index = () => {
 };
 
 export default Index;
+
